@@ -17,12 +17,21 @@ st.title("📊 Lead Analytics Dashboard")
 # ======================================================
 # UPLOAD CSV (SOLO QUI)
 # ======================================================
-uploaded_file = st.file_uploader("Carica il CSV Lead", type="csv")
+uploaded_file = st.file_uploader("Carica il CSV lead", type=["csv"])
 
 if uploaded_file is not None:
-    df_loaded = clean_leads(load_leads(uploaded_file))
-    st.session_state["df_leads"] = df_loaded
-    st.success(f"CSV caricato correttamente ({len(df_loaded)} lead)")
+    df = pd.read_csv(uploaded_file)
+
+    st.markdown("## Anteprima dataset")
+    st.dataframe(df.head(20), use_container_width=True, hide_index=True)
+
+    # =========================================
+    # MAPPATURA GEOGRAFICA LODANALYST
+    # =========================================
+    df_geo = render_geo_mapping_section(df)
+
+    # Se vuoi usare da qui in avanti il dataframe arricchito:
+    df = df_geo
 
 # ======================================================
 # LOAD DA SESSIONE (OBBLIGATORIO)
