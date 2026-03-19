@@ -1,107 +1,132 @@
 import pandas as pd
 
-from core.source_mapping import classify_source
-from core.reparto_mapping import map_reparto
-
-
-# ==========================================================
-# COLUMN MAPPING (robusto: case-insensitive + pulizia)
-# ==========================================================
-COLUMN_MAP = {
-    "data creazione": "data",
-    "descrizione provenienza": "fonte_raw",
-    "modello auto": "modello",
-    "stato lead": "stato",
-    "interesse": "interesse",
-    "marca": "marca",
-    "intestatario": "intestatario",
-}
-
 
 def clean_leads(df: pd.DataFrame) -> pd.DataFrame:
-    # ======================================================
-    # NORMALIZZA NOMI COLONNE
-    # ======================================================
-    df.columns = (
-        df.columns
-        .astype(str)
-        .str.strip()
-        .str.lower()
-        .str.replace("\ufeff", "", regex=False)  # BOM
-    )
+    if df is None or df.empty:
+        raise ValueError("Il file caricato è vuoto o non leggibile.")
 
-    # ======================================================
-    # RINOMINA COLONNE NOTE
-    # ======================================================
-    df = df.rename(columns={c: COLUMN_MAP[c] for c in df.columns if c in COLUMN_MAP})
+    d = df.copy()
 
-    # ======================================================
-    # CHECK COLONNE OBBLIGATORIE
-    # ======================================================
-    required = ["data", "fonte_raw", "stato", "interesse", "marca", "intestatario"]
-    missing = [c for c in required if c not in df.columns]
+    # -------------------------------------------------
+    # normalizza i nomi colonna originali
+    # -------------------------------------------------
+    d.columns = [str(c).strip() for c in d.columns]
+
+    rename_map = {
+        "ID lead": "id lead",
+        "Stato lead": "stato",
+        "Data creazione": "data",
+        "Provincia": "provincia",
+        "Provenienza": "fonte",
+        "Interesse": "tipo_interesse",
+        "Marca": "brand",
+        "Modello": "carline",
+        "Azienda": "reparto",
+        "Intestatario": "intestatario",
+        "Causale Chiusura": "causale_chiusura",
+        "Data Chiusura": "data_chiusura",
+        "Sede": "sede",
+        "Canale": "canale",
+        "Campagna": "campagna",
+        "UTM Source": "utm_source",
+        "UTM Medium": "utm_medium",
+        "UTM Campaign": "utm_campaign",
+        "UTM Term": "utm_term",
+        "UTM Content": "utm_content",
+        "Città": "citta",
+        "CAP": "cap",
+        "Nome/Rag. soc.": "nome_rag_soc",
+        "Tipo soggetto": "tipo_soggetto",
+        "Descrizione provenienza": "descrizione_provenienza",
+    }
+
+    d = d.rename(columns=rename_map)
+
+    # -------------------------------------------------
+    # controlla colonne minime reali dopo il rename
+    # -------------------------------------------------
+    required_after_rename = [
+        "id lead",
+        "stato",
+        "data",
+        "provincia",
+        "fonte",
+        "tipo_interesse",
+        "brand",
+        "intestatario",
+    ]
+
+    missing = [c for c in required_after_rename if c not in d.columns]
     if missing:
         raise ValueError(
-            f"Colonne mancanti nel CSV: {missing}\n"
-            f"Colonne presenti: {list(df.columns)}"
+            f"Mancano colonne obbligatorie dopo la normalizzazione: {missing}"
         )
 
-    # ======================================================
-    # PARSING DATA (EU)
-    # ======================================================
-    df["data"] = pd.to_datetime(df["data"], dayfirst=True, errors="coerce")
+    # -------------------------------------------------
+    # pulizia base stringhe
+    # -------------------------------------------------
+    for col in d.columns:
+        if d[col].dtype == "object":
+            d[col] = d[col].fillna("").astype(str).str.strip()
 
-    # ======================================================
-    # FLAG VENDITA (Deal)
-    # ======================================================
-    df["is_deal"] = df["stato"].astype(str).str.strip().str.lower().eq("deal")
+    # -------------------------------------------------
+    # data e mese
+    # -------------------------------------------------
+    d["data"] = pd.to_datetime(d["data"], errors="coerce")
+    d["mese"] = d["data"].dt.to_period("M").astype(str)
 
-    # ======================================================
-    # TIPO INTERESSE (Nuovo/Usato)
-    # ======================================================
-    def normalize_interest(val):
-        if not isinstance(val, str):
-            return "Altro"
-        v = val.strip().lower()
+    # -------------------------------------------------
+    # is_deal / vendita
+    # logica basata su stato / causale chiusura
+    # -------------------------------------------------
+    stato_lower = d["stato"].fillna("").astype(str).str.lower()
 
-        if v in ("nuovo", "nuovo/usato"):
-            return "Nuovo"
-        if v == "usato":
-            return "Usato"
-        return "Altro"
+    d["is_deal"] = stato_lower.str.contains("vend", na=False)
+    d["vendita"] = d["is_deal"].astype(int)
 
-    df["tipo_interesse"] = df["interesse"].apply(normalize_interest)
+    # -------------------------------------------------
+    # lead aperto
+    # -------------------------------------------------
+    d["lead_aperto"] = ~d["is_deal"]
 
-    # ======================================================
-    # BRAND (Mercedes vs Omoda/Jaecoo vs Altro)
-    # ======================================================
-    def normalize_brand(val):
-        if not isinstance(val, str):
-            return "Altro"
-        v = val.strip().lower()
+    if "causale_chiusura" not in d.columns:
+        d["causale_chiusura"] = ""
 
-        if "mercedes" in v:
-            return "Mercedes"
-        if "omoda" in v or "jaecoo" in v:
-            return "Omoda / Jaecoo"
-        return "Altro"
+    # -------------------------------------------------
+    # girato_venditori
+    # fallback prudente: se c'è intestatario valorizzato
+    # e non è chiuso subito come non gestito, consideralo girato
+    # -------------------------------------------------
+    intest = d["intestatario"].fillna("").astype(str).str.strip()
+    causale = d["causale_chiusura"].fillna("").astype(str).str.lower()
 
-    df["brand"] = df["marca"].apply(normalize_brand)
+    d["girato_venditori"] = (
+        intest.ne("")
+        & ~causale.str.contains("non gestito|duplicato|spam|errato", na=False)
+    )
 
-    # ======================================================
-    # FONTE (AUTOMATICA DA PROVENIENZA RAW)
-    # ======================================================
-    df["fonte"] = df["fonte_raw"].apply(classify_source)
+    # -------------------------------------------------
+    # gestore
+    # -------------------------------------------------
+    d["gestore"] = d["intestatario"]
 
-    # ======================================================
-    # REPARTO + GESTORE (DA INTESTATARIO)
-    # ======================================================
-    df["reparto"], df["gestore"] = zip(*df["intestatario"].apply(map_reparto))
+    # -------------------------------------------------
+    # reparto
+    # se manca o è vuoto, usa brand
+    # -------------------------------------------------
+    if "reparto" not in d.columns:
+        d["reparto"] = d["brand"]
+    else:
+        d["reparto"] = d["reparto"].replace("", pd.NA)
+        d["reparto"] = d["reparto"].fillna(d["brand"])
 
-    # ======================================================
-    # PERIODI
-    # ======================================================
-    df["mese"] = df["data"].dt.to_period("M").astype(str)
-    df["settimana"] = df["data"].dt.to_period("W").astype(str)
+    # -------------------------------------------------
+    # normalizzazioni semplici
+    # -------------------------------------------------
+    d["provincia"] = d["provincia"].astype(str).str.upper().str.strip()
+    d["fonte"] = d["fonte"].astype(str).str.strip()
+    d["tipo_interesse"] = d["tipo_interesse"].astype(str).str.strip()
+    d["brand"] = d["brand"].astype(str).str.strip()
+    d["carline"] = d["carline"].astype(str).str.strip() if "carline" in d.columns else ""
 
-    return df
+    return d

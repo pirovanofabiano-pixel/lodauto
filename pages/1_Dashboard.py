@@ -271,8 +271,6 @@ if uploaded_file is not None:
     st.session_state["df_leads"] = enriched_df
     st.success(f"CSV caricato correttamente ({len(enriched_df)} lead)")
 
-df = require_leads_df()
-
 # ======================================================
 # FILTRI
 # ======================================================
