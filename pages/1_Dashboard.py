@@ -245,15 +245,29 @@ uploaded_file = st.file_uploader("Carica il CSV Lead", type="csv")
 
 if uploaded_file is not None:
     raw_df = load_leads(uploaded_file)
-    clean_df = clean_leads(raw_df)
 
-    missing = validate_required_columns(clean_df)
+    # Debug utile
+    st.write("Colonne trovate nel CSV:")
+    st.write(list(raw_df.columns))
+
+    missing = validate_required_columns(raw_df)
     if missing:
         st.error("❌ Nel CSV mancano queste colonne obbligatorie:")
         st.write(missing)
         st.stop()
 
-    enriched_df = enrich_leads(clean_df)
+    try:
+        clean_df = clean_leads(raw_df)
+    except Exception as e:
+        st.error(f"❌ Errore in clean_leads(): {e}")
+        st.stop()
+
+    try:
+        enriched_df = enrich_leads(clean_df)
+    except Exception as e:
+        st.error(f"❌ Errore in enrich_leads(): {e}")
+        st.stop()
+
     st.session_state["df_leads"] = enriched_df
     st.success(f"CSV caricato correttamente ({len(enriched_df)} lead)")
 
