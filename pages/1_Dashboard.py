@@ -239,26 +239,27 @@ def color_diagnosi(val):
 
 
 # ======================================================
-# UPLOAD CSV
+# UPLOAD CSV (SOLO QUI)
 # ======================================================
 uploaded_file = st.file_uploader("Carica il CSV Lead", type="csv")
 
 if uploaded_file is not None:
     raw_df = load_leads(uploaded_file)
 
+    # Debug utile
     st.write("Colonne trovate nel CSV:")
     st.write(list(raw_df.columns))
+
+    missing = validate_required_columns(raw_df)
+    if missing:
+        st.error("❌ Nel CSV mancano queste colonne obbligatorie:")
+        st.write(missing)
+        st.stop()
 
     try:
         clean_df = clean_leads(raw_df)
     except Exception as e:
         st.error(f"❌ Errore in clean_leads(): {e}")
-        st.stop()
-
-    missing = validate_required_columns(clean_df)
-    if missing:
-        st.error("❌ Dopo la pulizia mancano queste colonne obbligatorie:")
-        st.write(missing)
         st.stop()
 
     try:
@@ -270,17 +271,7 @@ if uploaded_file is not None:
     st.session_state["df_leads"] = enriched_df
     st.success(f"CSV caricato correttamente ({len(enriched_df)} lead)")
 
-
-# ======================================================
-# DATAFRAME SESSIONE (FONDAMENTALE)
-# ======================================================
-if "df_leads" not in st.session_state:
-    st.info("Carica prima un file CSV per visualizzare la dashboard.")
-    st.stop()
-
-df = st.session_state["df_leads"].copy()
-st.write("Colonne finali dopo clean + enrich:")
-st.write(list(df.columns))
+df = require_leads_df()
 
 # ======================================================
 # FILTRI
